@@ -1,0 +1,36 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Node dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# PM2 files
+.pm2/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# Build/output folders
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+
+# Coverage reports
+coverage/
