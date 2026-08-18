@@ -13,6 +13,7 @@ const PORT = 3000;
 // Keep trace alive for 10 minutes
 const TRACE_RETENTION_TIME = 10 * 60 * 1000;
 
+
 // ---------------------------------------------
 // Active Playwright viewers
 // ---------------------------------------------
@@ -30,14 +31,20 @@ function getAvailablePort(startPort = 9323) {
 
         const server = net.createServer();
 
-        server.listen(startPort, "127.0.0.1");
+        server.listen(
+            startPort,
+            "127.0.0.1"
+        );
 
         server.on("listening", () => {
 
-            const port = server.address().port;
+            const port =
+                server.address().port;
 
             server.close(() => {
+
                 resolve(port);
+
             });
 
         });
@@ -46,9 +53,10 @@ function getAvailablePort(startPort = 9323) {
 
             if (err.code === "EADDRINUSE") {
 
-                // Try next port
                 resolve(
-                    getAvailablePort(startPort + 1)
+                    getAvailablePort(
+                        startPort + 1
+                    )
                 );
 
             } else {
@@ -68,164 +76,360 @@ function getAvailablePort(startPort = 9323) {
 // CREATE TRACE
 // =================================================
 
-app.get("/trace/:evidenceId", async (req, res) => {
+app.get(
+    "/trace/:evidenceId",
+    async (req, res) => {
 
-    let tracePath = null;
-    let traceProcess = null;
-    let sessionId = null;
+        let tracePath = null;
+        let traceProcess = null;
+        let sessionId = null;
 
-    try {
+        try {
 
-        const evidenceId = req.params.evidenceId;
+            // -----------------------------------------
+            // Parameters
+            // -----------------------------------------
 
-        console.log("");
-        console.log("====================================");
-        console.log("TRACE REQUEST");
-        console.log("====================================");
+            const evidenceId =
+                req.params.evidenceId;
 
-        console.log(
-            "Evidence ID:",
-            evidenceId
-        );
-
-
-        // -----------------------------------------
-        // 1. Download trace from S3
-        // -----------------------------------------
-
-        tracePath =
-            await downloadTrace(evidenceId);
-
-        console.log(
-            "Trace downloaded:",
-            tracePath
-        );
+            const {
+                testExecutionId,
+                vuid
+            } = req.query;
 
 
-        // -----------------------------------------
-        // 2. Find available port
-        // -----------------------------------------
+            // -----------------------------------------
+            // Validate parameters
+            // -----------------------------------------
 
-        const viewerPort =
-            await getAvailablePort(9323);
+            if (!testExecutionId) {
 
-        console.log(
-            "Playwright port:",
-            viewerPort
-        );
+                return res.status(400).json({
 
+                    error:
+                        "testExecutionId is required"
 
-        // -----------------------------------------
-        // 3. Create session ID
-        // -----------------------------------------
-
-        sessionId =
-            crypto.randomBytes(16).toString("hex");
-
-        console.log(
-            "Session ID:",
-            sessionId
-        );
-
-
-        // -----------------------------------------
-        // 4. Start Playwright
-        // -----------------------------------------
-
-        const command =
-            `npx playwright show-trace ` +
-            `"${tracePath}" ` +
-            `--host 127.0.0.1 ` +
-            `--port ${viewerPort}`;
-
-        console.log(
-            "Starting:",
-            command
-        );
-
-
-        traceProcess = exec(command);
-
-
-        // -----------------------------------------
-        // 5. Store session
-        // -----------------------------------------
-
-        viewers.set(sessionId, {
-
-            port: viewerPort,
-
-            process: traceProcess,
-
-            tracePath: tracePath,
-
-            evidenceId: evidenceId
-
-        });
-
-
-        console.log("");
-        console.log("VIEWER CREATED");
-        console.log(
-            `${sessionId} -> ${viewerPort}`
-        );
-
-
-        // -----------------------------------------
-        // Playwright logs
-        // -----------------------------------------
-
-        traceProcess.stdout.on(
-            "data",
-            (data) => {
-
-                console.log(
-                    `[Playwright ${viewerPort}] ${data}`
-                );
+                });
 
             }
-        );
 
 
-        traceProcess.stderr.on(
-            "data",
-            (data) => {
+            if (!vuid) {
 
-                console.error(
-                    `[Playwright ${viewerPort}] ${data}`
-                );
+                return res.status(400).json({
+
+                    error:
+                        "vuid is required"
+
+                });
 
             }
-        );
 
-
-        // -----------------------------------------
-        // 6. Cleanup after 10 minutes
-        // -----------------------------------------
-
-        setTimeout(() => {
 
             console.log("");
+            console.log("====================================");
+            console.log("TRACE REQUEST");
+            console.log("====================================");
+
             console.log(
-                "CLEANING TRACE:",
+                "Evidence ID:",
+                evidenceId
+            );
+
+            console.log(
+                "Test Execution ID:",
+                testExecutionId
+            );
+
+            console.log(
+                "VUID:",
+                vuid
+            );
+
+
+            // -----------------------------------------
+            // 1. Download trace from S3
+            // -----------------------------------------
+
+            tracePath =
+                await downloadTrace(
+                    testExecutionId,
+                    evidenceId
+                );
+
+            console.log(
+                "Trace downloaded:",
+                tracePath
+            );
+
+
+            // -----------------------------------------
+            // 2. Find available port
+            // -----------------------------------------
+
+            const viewerPort =
+                await getAvailablePort(9323);
+
+            console.log(
+                "Playwright port:",
+                viewerPort
+            );
+
+
+            // -----------------------------------------
+            // 3. Create session ID
+            // -----------------------------------------
+
+            sessionId =
+                crypto.randomBytes(16).toString("hex");
+
+            console.log(
+                "Session ID:",
                 sessionId
             );
 
 
-            // Stop Playwright
-            if (traceProcess) {
+            // -----------------------------------------
+            // 4. Start Playwright
+            // -----------------------------------------
 
-                traceProcess.kill();
+            const command =
+                `npx playwright show-trace ` +
+                `"${tracePath}" ` +
+                `--host 127.0.0.1 ` +
+                `--port ${viewerPort}`;
 
+            console.log(
+                "Starting:",
+                command
+            );
+
+
+            traceProcess =
+                exec(command);
+
+
+            // -----------------------------------------
+            // 5. Store session
+            // -----------------------------------------
+
+            viewers.set(
+                sessionId,
+                {
+
+                    port:
+                        viewerPort,
+
+                    process:
+                        traceProcess,
+
+                    tracePath:
+                        tracePath,
+
+                    evidenceId:
+                        evidenceId,
+
+                    testExecutionId:
+                        testExecutionId,
+
+                    vuid:
+                        vuid
+
+                }
+            );
+
+
+            console.log("");
+            console.log("VIEWER CREATED");
+
+            console.log(
+                `${sessionId} -> ${viewerPort}`
+            );
+
+            console.log(
+                "Evidence ID:",
+                evidenceId
+            );
+
+            console.log(
+                "Test Execution ID:",
+                testExecutionId
+            );
+
+            console.log(
+                "VUID:",
+                vuid
+            );
+
+
+            // -----------------------------------------
+            // Playwright logs
+            // -----------------------------------------
+
+            traceProcess.stdout.on(
+                "data",
+                (data) => {
+
+                    console.log(
+                        `[Playwright ${viewerPort}] ${data}`
+                    );
+
+                }
+            );
+
+
+            traceProcess.stderr.on(
+                "data",
+                (data) => {
+
+                    console.error(
+                        `[Playwright ${viewerPort}] ${data}`
+                    );
+
+                }
+            );
+
+
+            // -----------------------------------------
+            // Playwright process exit
+            // -----------------------------------------
+
+            traceProcess.on(
+                "exit",
+                (code, signal) => {
+
+                    console.log(
+                        `Playwright exited. ` +
+                        `Port: ${viewerPort}, ` +
+                        `Code: ${code}, ` +
+                        `Signal: ${signal}`
+                    );
+
+                }
+            );
+
+
+            // -----------------------------------------
+            // 6. Cleanup after 10 minutes
+            // -----------------------------------------
+
+            setTimeout(() => {
+
+                console.log("");
                 console.log(
-                    "Playwright stopped:",
-                    viewerPort
+                    "CLEANING TRACE:",
+                    sessionId
                 );
 
-            }
+
+                // Stop Playwright
+
+                if (traceProcess) {
+
+                    traceProcess.kill();
+
+                    console.log(
+                        "Playwright stopped:",
+                        viewerPort
+                    );
+
+                }
 
 
-            // Delete downloaded ZIP
+                // Delete downloaded trace
+
+                if (
+                    tracePath &&
+                    fs.existsSync(tracePath)
+                ) {
+
+                    fs.unlink(
+                        tracePath,
+                        (err) => {
+
+                            if (err) {
+
+                                console.error(
+                                    "Failed to delete trace:",
+                                    err
+                                );
+
+                            } else {
+
+                                console.log(
+                                    "Trace deleted:",
+                                    tracePath
+                                );
+
+                            }
+
+                        }
+                    );
+
+                }
+
+
+                // Remove session
+
+                viewers.delete(
+                    sessionId
+                );
+
+                console.log(
+                    "Session removed:",
+                    sessionId
+                );
+
+
+            }, TRACE_RETENTION_TIME);
+
+
+            // -----------------------------------------
+            // 7. Return viewer URL
+            // -----------------------------------------
+
+            res.json({
+
+                message:
+                    "Trace launched successfully",
+
+                sessionId:
+                    sessionId,
+
+                viewer:
+                    `http://localhost:${PORT}/viewer/${sessionId}`,
+
+                evidenceId:
+                    evidenceId,
+
+                testExecutionId:
+                    testExecutionId,
+
+                vuid:
+                    vuid,
+
+                port:
+                    viewerPort,
+
+                expiresIn:
+                    "10 minutes"
+
+            });
+
+
+        } catch (err) {
+
+            console.error(
+                "TRACE ERROR:",
+                err
+            );
+
+
+            // -----------------------------------------
+            // Cleanup trace
+            // -----------------------------------------
+
             if (
                 tracePath &&
                 fs.existsSync(tracePath)
@@ -233,118 +437,47 @@ app.get("/trace/:evidenceId", async (req, res) => {
 
                 fs.unlink(
                     tracePath,
-                    (err) => {
-
-                        if (err) {
-
-                            console.error(
-                                "Failed to delete trace:",
-                                err
-                            );
-
-                        } else {
-
-                            console.log(
-                                "Trace deleted:",
-                                tracePath
-                            );
-
-                        }
-
-                    }
+                    () => {}
                 );
 
             }
 
 
-            // Remove session
-            viewers.delete(sessionId);
+            // -----------------------------------------
+            // Cleanup Playwright
+            // -----------------------------------------
 
-            console.log(
-                "Session removed:",
-                sessionId
-            );
+            if (traceProcess) {
 
+                traceProcess.kill();
 
-        }, TRACE_RETENTION_TIME);
-
-
-        // -----------------------------------------
-        // 7. Return public viewer URL
-        // -----------------------------------------
-
-        res.json({
-
-            message:
-                "Trace launched successfully",
-
-            sessionId:
-
-                sessionId,
-
-            viewer:
-
-                `http://localhost:3000/viewer/${sessionId}`,
-
-            port:
-
-                viewerPort,
-
-            expiresIn:
-
-                "10 minutes"
-
-        });
+            }
 
 
-    } catch (err) {
+            // -----------------------------------------
+            // Cleanup session
+            // -----------------------------------------
 
-        console.error(
-            "TRACE ERROR:",
-            err
-        );
+            if (sessionId) {
+
+                viewers.delete(
+                    sessionId
+                );
+
+            }
 
 
-        // Cleanup ZIP
-        if (
-            tracePath &&
-            fs.existsSync(tracePath)
-        ) {
+            res.status(500).json({
 
-            fs.unlink(
-                tracePath,
-                () => {}
-            );
+                error:
+                    err.message
+
+            });
 
         }
-
-
-        // Cleanup Playwright
-        if (traceProcess) {
-
-            traceProcess.kill();
-
-        }
-
-
-        // Cleanup session
-        if (sessionId) {
-
-            viewers.delete(sessionId);
-
-        }
-
-
-        res.status(500).json({
-
-            error:
-                err.message
-
-        });
 
     }
-
-});
+);
 
 
 // =================================================
@@ -393,6 +526,22 @@ app.use(
         );
 
 
+        console.log(
+            "Evidence ID:",
+            viewer.evidenceId
+        );
+
+        console.log(
+            "Test Execution ID:",
+            viewer.testExecutionId
+        );
+
+        console.log(
+            "VUID:",
+            viewer.vuid
+        );
+
+
         // -----------------------------------------
         // Forward request to Playwright
         // -----------------------------------------
@@ -425,22 +574,70 @@ app.use(
 
 
 // =================================================
+// OPTIONAL: SESSION INFO API
+// =================================================
+
+app.get(
+    "/trace-session/:sessionId",
+    (req, res) => {
+
+        const sessionId =
+            req.params.sessionId;
+
+        const viewer =
+            viewers.get(sessionId);
+
+
+        if (!viewer) {
+
+            return res.status(404).json({
+
+                error:
+                    "Trace session not found or expired"
+
+            });
+
+        }
+
+
+        res.json({
+
+            sessionId:
+                sessionId,
+
+            port:
+                viewer.port,
+
+            evidenceId:
+                viewer.evidenceId,
+
+            testExecutionId:
+                viewer.testExecutionId,
+
+            vuid:
+                viewer.vuid
+
+        });
+
+    }
+);
+
+
+// =================================================
 // START SERVER
 // =================================================
 
-app.listen(PORT, () => {
+app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
 
-    console.log("");
-    console.log(
-        "===================================="
-    );
+        console.log("");
+        console.log("====================================");
+        console.log(
+            `Server running on http://0.0.0.0:${PORT}`
+        );
+        console.log("====================================");
 
-    console.log(
-        `Server running at http://localhost:${PORT}`
-    );
-
-    console.log(
-        "===================================="
-    );
-
-});
+    }
+);

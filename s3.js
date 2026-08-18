@@ -1,6 +1,6 @@
 const {
-  S3Client,
-  GetObjectCommand
+    S3Client,
+    GetObjectCommand
 } = require("@aws-sdk/client-s3");
 
 const fs = require("fs");
@@ -11,93 +11,186 @@ require("dotenv").config();
 
 const client = new S3Client({
 
-  region: process.env.AWS_REGION,
+    region:
+        process.env.AWS_REGION,
 
-  credentials: {
+    credentials: {
 
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        accessKeyId:
+            process.env.AWS_ACCESS_KEY_ID,
 
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+        secretAccessKey:
+            process.env.AWS_SECRET_ACCESS_KEY
 
-  }
+    }
 
 });
 
 
-async function downloadTrace(traceId) {
+async function downloadTrace(
+    testExecutionId,
+    evidenceId
+) {
 
-  const bucket = "sas-migration-result-eveidence";
+    // ---------------------------------------------
+    // S3 configuration
+    // ---------------------------------------------
 
-  const key = `testExecution-1786976044823/${traceId}`;
-
-
-  console.log("Downloading from S3:");
-
-  console.log( `s3://${bucket}/${key}`);
-
-
-  const command =
-    new GetObjectCommand({
-
-      Bucket: bucket,
-      Key: key
-
-    });
+    const bucket =
+        "sas-migration-result-eveidence";
 
 
-  const response = await client.send(command);
+    const key =
+        `${testExecutionId}/${evidenceId}`;
 
 
-  const traceFolder = path.join(__dirname, "traces");
+    console.log("");
+    console.log("====================================");
+    console.log("S3 TRACE DOWNLOAD");
+    console.log("====================================");
 
-
-  if (!fs.existsSync(traceFolder)) {
-
-    fs.mkdirSync(traceFolder, {
-      recursive: true
-    });
-
-  }
-
-
-  // Unique local filename
-  const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2)}-${traceId}`;
-
-
-  const tracePath =
-    path.join( traceFolder, uniqueName );
-
-
-  const writeStream = fs.createWriteStream(tracePath);
-
-
-  await new Promise((resolve, reject) => {
-
-    response.Body.pipe(writeStream);
-
-    response.Body.on(
-      "error",
-      reject
+    console.log(
+        "Bucket:",
+        bucket
     );
 
-    writeStream.on(
-      "error",
-      reject
+    console.log(
+        "Key:",
+        key
     );
 
-    writeStream.on(
-      "finish",
-      resolve
+    console.log(
+        `s3://${bucket}/${key}`
     );
 
-  });
+
+    // ---------------------------------------------
+    // Get object
+    // ---------------------------------------------
+
+    const command =
+        new GetObjectCommand({
+
+            Bucket:
+                bucket,
+
+            Key:
+                key
+
+        });
 
 
-  console.log( "Trace saved locally:",  tracePath );
+    const response =
+        await client.send(command);
 
-  return tracePath;
+
+    // ---------------------------------------------
+    // Create local traces folder
+    // ---------------------------------------------
+
+    const traceFolder =
+        path.join(
+            __dirname,
+            "traces"
+        );
+
+
+    if (!fs.existsSync(traceFolder)) {
+
+        fs.mkdirSync(
+            traceFolder,
+            {
+                recursive: true
+            }
+        );
+
+    }
+
+
+    // ---------------------------------------------
+    // Unique local filename
+    // ---------------------------------------------
+
+    const uniqueName =
+        `${Date.now()}-` +
+        `${Math.random().toString(36).substring(2)}-` +
+        `${evidenceId}`;
+
+
+    const tracePath =
+        path.join(
+            traceFolder,
+            uniqueName
+        );
+
+
+    console.log(
+        "Local trace path:",
+        tracePath
+    );
+
+
+    // ---------------------------------------------
+    // Write S3 stream to file
+    // ---------------------------------------------
+
+    const writeStream =
+        fs.createWriteStream(
+            tracePath
+        );
+
+
+    await new Promise(
+        (resolve, reject) => {
+
+            response.Body.pipe(
+                writeStream
+            );
+
+
+            response.Body.on(
+                "error",
+                (err) => {
+
+                    reject(err);
+
+                }
+            );
+
+
+            writeStream.on(
+                "error",
+                (err) => {
+
+                    reject(err);
+
+                }
+            );
+
+
+            writeStream.on(
+                "finish",
+                () => {
+
+                    resolve();
+
+                }
+            );
+
+        }
+    );
+
+
+    console.log(
+        "Trace saved locally:",
+        tracePath
+    );
+
+
+    return tracePath;
 
 }
 
 
-module.exports = downloadTrace;
+module.exports =
+    downloadTrace;
