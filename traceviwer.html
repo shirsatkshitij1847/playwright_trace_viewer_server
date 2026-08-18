@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Trace Popup</title>
+
+<style>
+body{
+    font-family: Arial;
+}
+
+button{
+    padding:10px 20px;
+    background:#007bff;
+    color:white;
+    border:0;
+    border-radius:5px;
+    cursor:pointer;
+}
+
+
+/* Popup background */
+.modal{
+    display:none;
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    background:rgba(0,0,0,.5);
+    z-index:9999;
+}
+
+
+/* iframe box */
+.popup-box{
+
+    width:80%;
+    height:80%;
+
+    background:white;
+    position:absolute;
+    top:50%;
+    left:50%;
+
+    transform:translate(-50%,-50%);
+
+    border-radius:10px;
+    overflow:hidden;
+}
+
+
+/* header buttons */
+.header{
+
+    height:45px;
+    background:#222;
+    color:white;
+
+    display:flex;
+    justify-content:flex-end;
+    align-items:center;
+    gap:10px;
+    padding:0 10px;
+}
+
+
+.header button{
+
+    background:#444;
+    padding:5px 12px;
+
+}
+
+
+iframe{
+
+    width:100%;
+    height:calc(100% - 45px);
+    border:none;
+
+}
+
+
+/* fullscreen */
+.fullscreen{
+
+    width:100% !important;
+    height:100% !important;
+    top:0;
+    left:0;
+    transform:none;
+
+    border-radius:0;
+
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+
+<h2>Playwright Report</h2>
+
+
+<button onclick="openTrace()">
+Open Trace Viewer
+</button>
+
+
+
+<div id="traceModal" class="modal">
+
+
+<div id="popupBox" class="popup-box">
+
+
+<div class="header">
+
+<button onclick="maximizeTrace()">
+⛶
+</button>
+
+<button onclick="minimizeTrace()">
+▢
+</button>
+
+
+<button onclick="closeTrace()">
+✕
+</button>
+
+</div>
+
+
+<iframe 
+id="traceFrame">
+</iframe>
+
+
+</div>
+
+
+</div>
+
+
+
+<script>
+
+
+const traceUrl="https://trace.triratnaakolayouth.com";
+
+
+function openTrace(){
+
+    document.getElementById("traceModal").style.display="block";
+
+    document.getElementById("traceFrame").src=traceUrl;
+
+}
+
+
+function closeTrace(){
+
+    document.getElementById("traceModal").style.display="none";
+
+    document.getElementById("traceFrame").src="";
+
+}
+
+
+function maximizeTrace(){
+
+    document
+    .getElementById("popupBox")
+    .classList.add("fullscreen");
+
+}
+
+
+function minimizeTrace(){
+
+    document
+    .getElementById("popupBox")
+    .classList.remove("fullscreen");
+
+}
+
+
+</script>
+
+
+</body>
+</html>
