@@ -3,13 +3,16 @@ const fs = require("fs");
 const path = require("path");
 const net = require("net");
 const crypto = require("crypto");
-const { spawn } = require("child_process");
-const { createProxyMiddleware } = require("http-proxy-middleware");
+const {
+    spawn
+} = require("child_process");
+const {
+    createProxyMiddleware
+} = require("http-proxy-middleware");
 
 const downloadTrace = require("./s3");
 
 const app = express();
-
 
 // ============================================================
 // CONFIGURATION
@@ -18,24 +21,33 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
 // Maximum simultaneous trace viewers
-const MAX_VIEWERS = 20;
+const MAX_VIEWERS = 100;
 
 // Fixed Playwright ports
 const PLAYWRIGHT_START_PORT = 9323;
 
-const PLAYWRIGHT_PORTS = Array.from(
-    { length: MAX_VIEWERS },
+const PLAYWRIGHT_PORTS = Array.from({
+    length: MAX_VIEWERS
+},
     (_, index) => PLAYWRIGHT_START_PORT + index
 );
 
-// Trace lifetime
+// Trace lifetime (absolute max, regardless of activity)
 const TRACE_RETENTION_TIME =
     10 * 60 * 1000;
+
+// Free a viewer's port if the browser tab stops polling it
+// (e.g. tab closed / navigated away) before the idle timeout
+const IDLE_TIMEOUT =
+    2 * 60 * 1000;
+
+// How often to sweep for idle/expired viewers
+const IDLE_CHECK_INTERVAL =
+    15 * 1000;
 
 // Directory for downloaded traces
 const TRACE_DIRECTORY =
     path.join(__dirname, "traces");
-
 
 // ============================================================
 // CREATE TRACE DIRECTORY
@@ -43,13 +55,11 @@ const TRACE_DIRECTORY =
 
 if (!fs.existsSync(TRACE_DIRECTORY)) {
     fs.mkdirSync(
-        TRACE_DIRECTORY,
-        {
-            recursive: true
-        }
+        TRACE_DIRECTORY, {
+        recursive: true
+    }
     );
 }
-
 
 // ============================================================
 // ACTIVE VIEWERS
@@ -63,13 +73,13 @@ if (!fs.existsSync(TRACE_DIRECTORY)) {
 //     testExecutionId,
 //     vuid,
 //     createdAt,
+//     lastAccessedAt,
 //     cleanupTimer
 // }
 //
 // ============================================================
 
 const viewers = new Map();
-
 
 // ============================================================
 // RESERVED PORTS
@@ -81,7 +91,6 @@ const viewers = new Map();
 // ============================================================
 
 const reservedPorts = new Set();
-
 
 // ============================================================
 // PLAYWRIGHT CLI
@@ -123,7 +132,6 @@ function getPlaywrightCli() {
     }
 
 }
-
 
 // ============================================================
 // PORT CHECK
@@ -169,7 +177,6 @@ function isPortAvailable(port) {
 
 }
 
-
 // ============================================================
 // GET FREE FIXED PORT
 // ============================================================
@@ -204,7 +211,6 @@ async function getFreeViewerPort() {
 
 }
 
-
 // ============================================================
 // RELEASE PORT
 // ============================================================
@@ -214,7 +220,6 @@ function releasePort(port) {
     reservedPorts.delete(port);
 
 }
-
 
 // ============================================================
 // VALIDATE EXECUTION ID
@@ -262,7 +267,6 @@ function validateTestExecutionId(value) {
     };
 
 }
-
 
 // ============================================================
 // VALIDATE TRACE FILE
@@ -337,7 +341,6 @@ function validateTraceFile(filename) {
 
 }
 
-
 // ============================================================
 // EXTRACT VUID
 // ============================================================
@@ -358,7 +361,6 @@ function getVuidFromFilename(filename) {
     );
 
 }
-
 
 // ============================================================
 // WAIT FOR PORT
@@ -465,7 +467,6 @@ function waitForPort(
 
 }
 
-
 // ============================================================
 // STOP VIEWER
 // ============================================================
@@ -500,7 +501,6 @@ function stopViewer(
         viewer.port
     );
 
-
     // --------------------------------------------------------
     // Stop Playwright
     // --------------------------------------------------------
@@ -525,6 +525,17 @@ function stopViewer(
 
     }
 
+    // --------------------------------------------------------
+    // Clear pending timer
+    // --------------------------------------------------------
+
+    if (viewer.cleanupTimer) {
+
+        clearTimeout(
+            viewer.cleanupTimer
+        );
+
+    }
 
     // --------------------------------------------------------
     // Delete trace
@@ -557,7 +568,6 @@ function stopViewer(
 
     }
 
-
     // --------------------------------------------------------
     // Release port
     // --------------------------------------------------------
@@ -566,7 +576,6 @@ function stopViewer(
         viewer.port
     );
 
-
     // --------------------------------------------------------
     // Remove session
     // --------------------------------------------------------
@@ -574,7 +583,6 @@ function stopViewer(
     viewers.delete(
         sessionId
     );
-
 
     console.log(
         "Viewer removed"
@@ -587,6 +595,55 @@ function stopViewer(
 
 }
 
+// ============================================================
+// IDLE VIEWER SWEEP
+// ============================================================
+//
+// Frees a viewer's port as soon as its idle timeout is hit,
+// instead of waiting for the absolute TRACE_RETENTION_TIME.
+// This is what releases the port shortly after a browser tab
+// is closed (no more proxied requests come in for that
+// session), since HTTP gives the server no direct signal that
+// a tab was closed.
+//
+// ============================================================
+
+setInterval(
+    () => {
+
+        const now = Date.now();
+
+        for (
+            const [sessionId, viewer] of viewers
+        ) {
+
+            const idleFor =
+                now - viewer.lastAccessedAt;
+
+            const aliveFor =
+                now - viewer.createdAt;
+
+            if (
+                idleFor > IDLE_TIMEOUT ||
+                aliveFor > TRACE_RETENTION_TIME
+            ) {
+
+                console.log(
+                    "Idle/expired viewer, freeing port:",
+                    sessionId
+                );
+
+                stopViewer(
+                    sessionId
+                );
+
+            }
+
+        }
+
+    },
+    IDLE_CHECK_INTERVAL
+);
 
 // ============================================================
 // HEALTH CHECK
@@ -600,29 +657,22 @@ app.get(
 
             status: "ok",
 
-            service:
-                "playwright-trace-viewer",
+            service: "playwright-trace-viewer",
 
-            uptime:
-                process.uptime(),
+            uptime: process.uptime(),
 
-            activeViewers:
-                viewers.size,
+            activeViewers: viewers.size,
 
-            maxViewers:
-                MAX_VIEWERS,
+            maxViewers: MAX_VIEWERS,
 
-            availableSlots:
-                MAX_VIEWERS - viewers.size,
+            availableSlots: MAX_VIEWERS - viewers.size,
 
-            playwrightPorts:
-                PLAYWRIGHT_PORTS
+            playwrightPorts: PLAYWRIGHT_PORTS
 
         });
 
     }
 );
-
 
 // ============================================================
 // PORT INFORMATION
@@ -660,11 +710,9 @@ app.get(
 
                     port,
 
-                    reserved:
-                        reservedPorts.has(port),
+                    reserved: reservedPorts.has(port),
 
-                    active:
-                        Boolean(sessionId),
+                    active: Boolean(sessionId),
 
                     sessionId
 
@@ -675,14 +723,11 @@ app.get(
 
         res.json({
 
-            maxViewers:
-                MAX_VIEWERS,
+            maxViewers: MAX_VIEWERS,
 
-            activeViewers:
-                viewers.size,
+            activeViewers: viewers.size,
 
-            availableSlots:
-                MAX_VIEWERS - viewers.size,
+            availableSlots: MAX_VIEWERS - viewers.size,
 
             ports
 
@@ -690,7 +735,6 @@ app.get(
 
     }
 );
-
 
 // ============================================================
 // CREATE TRACE VIEWER
@@ -727,7 +771,6 @@ app.get(
                 "===================================="
             );
 
-
             // ------------------------------------------------
             // Parameters
             // ------------------------------------------------
@@ -738,7 +781,6 @@ app.get(
             const testExecutionId =
                 req.query.testExecutionId;
 
-
             console.log(
                 "Filename:",
                 filename
@@ -748,7 +790,6 @@ app.get(
                 "Execution:",
                 testExecutionId
             );
-
 
             // ------------------------------------------------
             // Validate filename
@@ -765,13 +806,11 @@ app.get(
 
                 return res.status(400).json({
 
-                    error:
-                        filenameValidation.error
+                    error: filenameValidation.error
 
                 });
 
             }
-
 
             // ------------------------------------------------
             // Validate execution ID
@@ -788,13 +827,11 @@ app.get(
 
                 return res.status(400).json({
 
-                    error:
-                        executionValidation.error
+                    error: executionValidation.error
 
                 });
 
             }
-
 
             // ------------------------------------------------
             // VUID comes from filename
@@ -805,12 +842,10 @@ app.get(
                     filename
                 );
 
-
             console.log(
                 "VUID:",
                 vuid
             );
-
 
             // ------------------------------------------------
             // Maximum viewer limit
@@ -823,19 +858,15 @@ app.get(
 
                 return res.status(429).json({
 
-                    error:
-                        "Maximum trace viewer limit reached",
+                    error: "Maximum trace viewer limit reached",
 
-                    maxViewers:
-                        MAX_VIEWERS,
+                    maxViewers: MAX_VIEWERS,
 
-                    message:
-                        "Please try again later"
+                    message: "Please try again later"
 
                 });
 
             }
-
 
             // ------------------------------------------------
             // Get fixed port
@@ -844,27 +875,22 @@ app.get(
             viewerPort =
                 await getFreeViewerPort();
 
-
             if (!viewerPort) {
 
                 return res.status(503).json({
 
-                    error:
-                        "No trace viewer slots available",
+                    error: "No trace viewer slots available",
 
-                    maxViewers:
-                        MAX_VIEWERS
+                    maxViewers: MAX_VIEWERS
 
                 });
 
             }
 
-
             console.log(
                 "Viewer port:",
                 viewerPort
             );
-
 
             // ------------------------------------------------
             // Download S3 trace
@@ -875,7 +901,6 @@ app.get(
                     testExecutionId,
                     filename
                 );
-
 
             if (
                 !tracePath ||
@@ -888,12 +913,10 @@ app.get(
 
             }
 
-
             console.log(
                 "Trace:",
                 tracePath
             );
-
 
             // ------------------------------------------------
             // Session ID
@@ -904,12 +927,10 @@ app.get(
                     .randomBytes(16)
                     .toString("hex");
 
-
             console.log(
                 "Session:",
                 sessionId
             );
-
 
             // ------------------------------------------------
             // Playwright CLI
@@ -918,12 +939,10 @@ app.get(
             const playwrightCli =
                 getPlaywrightCli();
 
-
             console.log(
                 "Playwright CLI:",
                 playwrightCli
             );
-
 
             // ------------------------------------------------
             // Start Playwright
@@ -945,30 +964,25 @@ app.get(
 
             ];
 
-
             console.log(
                 "Starting Playwright..."
             );
 
-
             traceProcess =
                 spawn(
                     process.execPath,
-                    args,
-                    {
+                    args, {
 
-                        stdio: [
-                            "ignore",
-                            "pipe",
-                            "pipe"
-                        ],
+                    stdio: [
+                        "ignore",
+                        "pipe",
+                        "pipe"
+                    ],
 
-                        windowsHide:
-                            true
+                    windowsHide: true
 
-                    }
+                }
                 );
-
 
             // ------------------------------------------------
             // Playwright stdout
@@ -985,7 +999,6 @@ app.get(
                 }
             );
 
-
             // ------------------------------------------------
             // Playwright stderr
             // ------------------------------------------------
@@ -1000,7 +1013,6 @@ app.get(
 
                 }
             );
-
 
             // ------------------------------------------------
             // Spawn error
@@ -1018,7 +1030,6 @@ app.get(
                 }
             );
 
-
             // ------------------------------------------------
             // Process exit
             // ------------------------------------------------
@@ -1034,7 +1045,6 @@ app.get(
                 }
             );
 
-
             // ------------------------------------------------
             // Wait until Playwright is listening
             // ------------------------------------------------
@@ -1043,50 +1053,41 @@ app.get(
                 viewerPort
             );
 
-
             console.log(
                 `Playwright ready on ${viewerPort}`
             );
-
 
             // ------------------------------------------------
             // Store viewer
             // ------------------------------------------------
 
             viewers.set(
-                sessionId,
-                {
+                sessionId, {
 
-                    port:
-                        viewerPort,
+                port: viewerPort,
 
-                    process:
-                        traceProcess,
+                process: traceProcess,
 
-                    tracePath:
-                        tracePath,
+                tracePath: tracePath,
 
-                    filename:
-                        filename,
+                filename: filename,
 
-                    evidenceId:
-                        filename,
+                evidenceId: filename,
 
-                    testExecutionId:
-                        testExecutionId,
+                testExecutionId: testExecutionId,
 
-                    vuid:
-                        vuid,
+                vuid: vuid,
 
-                    createdAt:
-                        Date.now(),
+                createdAt: Date.now(),
 
-                    cleanupTimer:
-                        null
+                // Updated on every proxied request; used to
+                // detect a closed/abandoned tab
+                lastAccessedAt: Date.now(),
 
-                }
+                cleanupTimer: null
+
+            }
             );
-
 
             // ------------------------------------------------
             // Cleanup timer
@@ -1104,7 +1105,6 @@ app.get(
                     TRACE_RETENTION_TIME
                 );
 
-
             const viewer =
                 viewers.get(
                     sessionId
@@ -1113,7 +1113,6 @@ app.get(
             viewer.cleanupTimer =
                 cleanupTimer;
 
-
             // ------------------------------------------------
             // Return response
             // ------------------------------------------------
@@ -1121,48 +1120,34 @@ app.get(
             const host =
                 req.get("host");
 
-
             const protocol =
                 req.protocol;
 
-
             res.status(200).json({
 
-                success:
-                    true,
+                success: true,
 
-                message:
-                    "Trace viewer started",
+                message: "Trace viewer started",
 
-                sessionId:
-                    sessionId,
+                sessionId: sessionId,
 
-                viewer:
-                    `${protocol}://${host}/viewer/${sessionId}/`,
+                viewer: `${protocol}://${host}/viewer/${sessionId}/`,
 
-                testExecutionId:
-                    testExecutionId,
+                testExecutionId: testExecutionId,
 
-                filename:
-                    filename,
+                filename: filename,
 
-                vuid:
-                    vuid,
+                vuid: vuid,
 
-                port:
-                    viewerPort,
+                port: viewerPort,
 
-                expiresIn:
-                    "10 minutes",
+                expiresIn: "10 minutes",
 
-                activeViewers:
-                    viewers.size,
+                activeViewers: viewers.size,
 
-                maxViewers:
-                    MAX_VIEWERS
+                maxViewers: MAX_VIEWERS
 
             });
-
 
         } catch (error) {
 
@@ -1171,7 +1156,6 @@ app.get(
                 "TRACE ERROR:",
                 error
             );
-
 
             // ------------------------------------------------
             // Kill Playwright
@@ -1186,10 +1170,9 @@ app.get(
 
                     traceProcess.kill();
 
-                } catch {}
+                } catch { }
 
             }
-
 
             // ------------------------------------------------
             // Release port
@@ -1202,7 +1185,6 @@ app.get(
                 );
 
             }
-
 
             // ------------------------------------------------
             // Delete trace
@@ -1219,10 +1201,9 @@ app.get(
                         tracePath
                     );
 
-                } catch {}
+                } catch { }
 
             }
-
 
             // ------------------------------------------------
             // Remove session
@@ -1236,7 +1217,6 @@ app.get(
 
             }
 
-
             // ------------------------------------------------
             // Error response
             // ------------------------------------------------
@@ -1246,7 +1226,6 @@ app.get(
             let errorMessage =
                 error.message ||
                 "Internal server error";
-
 
             // S3 not found
             if (
@@ -1261,22 +1240,17 @@ app.get(
 
             }
 
-
             res.status(
                 statusCode
             ).json({
 
-                success:
-                    false,
+                success: false,
 
-                error:
-                    errorMessage,
+                error: errorMessage,
 
-                testExecutionId:
-                    testExecutionId || null,
+                testExecutionId: testExecutionId || null,
 
-                filename:
-                    req.params.filename || null
+                filename: req.params.filename || null
 
             });
 
@@ -1284,7 +1258,6 @@ app.get(
 
     }
 );
-
 
 // ============================================================
 // SESSION INFO
@@ -1302,73 +1275,58 @@ app.get(
                 sessionId
             );
 
-
         if (!viewer) {
 
             return res.status(404).json({
 
-                success:
-                    false,
+                success: false,
 
-                error:
-                    "Trace session not found or expired"
+                error: "Trace session not found or expired"
 
             });
 
         }
 
-
         const expiresAt =
             viewer.createdAt +
             TRACE_RETENTION_TIME;
 
-
         res.json({
 
-            success:
-                true,
+            success: true,
 
-            sessionId:
-                sessionId,
+            sessionId: sessionId,
 
-            filename:
-                viewer.filename,
+            filename: viewer.filename,
 
-            vuid:
-                viewer.vuid,
+            vuid: viewer.vuid,
 
-            testExecutionId:
-                viewer.testExecutionId,
+            testExecutionId: viewer.testExecutionId,
 
-            port:
-                viewer.port,
+            port: viewer.port,
 
-            createdAt:
-                new Date(
-                    viewer.createdAt
-                ).toISOString(),
+            createdAt: new Date(
+                viewer.createdAt
+            ).toISOString(),
 
-            expiresAt:
-                new Date(
-                    expiresAt
-                ).toISOString(),
+            expiresAt: new Date(
+                expiresAt
+            ).toISOString(),
 
-            remainingSeconds:
-                Math.max(
-                    0,
-                    Math.floor(
-                        (
-                            expiresAt -
-                            Date.now()
-                        ) / 1000
-                    )
+            remainingSeconds: Math.max(
+                0,
+                Math.floor(
+                    (
+                        expiresAt -
+                        Date.now()
+                    ) / 1000
                 )
+            )
 
         });
 
     }
 );
-
 
 // ============================================================
 // VIEWER PROXY
@@ -1389,12 +1347,10 @@ app.use(
         const sessionId =
             req.params.sessionId;
 
-
         const viewer =
             viewers.get(
                 sessionId
             );
-
 
         if (!viewer) {
 
@@ -1404,6 +1360,10 @@ app.use(
 
         }
 
+        // Mark activity so the idle sweep doesn't free this
+        // port while the tab is still open and in use
+        viewer.lastAccessedAt =
+            Date.now();
 
         console.log(
             "VIEWER:",
@@ -1412,63 +1372,56 @@ app.use(
             viewer.port
         );
 
-
         return createProxyMiddleware({
 
-            target:
-                `http://127.0.0.1:${viewer.port}`,
+            target: `http://127.0.0.1:${viewer.port}`,
 
-            changeOrigin:
-                true,
+            changeOrigin: true,
 
-            ws:
-                true,
+            ws: true,
 
-            pathRewrite:
-                (path) => {
+            pathRewrite: (path) => {
 
-                    // Remove:
-                    //
-                    // /viewer/<sessionId>
-                    //
-                    // leaving:
-                    //
-                    // /
+                // Remove:
+                //
+                // /viewer/<sessionId>
+                //
+                // leaving:
+                //
+                // /
 
-                    const prefix =
-                        `/viewer/${sessionId}`;
+                const prefix =
+                    `/viewer/${sessionId}`;
 
-                    if (
-                        path.startsWith(prefix)
-                    ) {
+                if (
+                    path.startsWith(prefix)
+                ) {
 
-                        return (
-                            path.substring(
-                                prefix.length
-                            ) || "/"
-                        );
-
-                    }
-
-                    return path;
-
-                },
-
-            onError:
-                (error, req, res) => {
-
-                    console.error(
-                        "Proxy error:",
-                        error.message
+                    return (
+                        path.substring(
+                            prefix.length
+                        ) || "/"
                     );
 
                 }
+
+                return path;
+
+            },
+
+            onError: (error, req, res) => {
+
+                console.error(
+                    "Proxy error:",
+                    error.message
+                );
+
+            }
 
         })(req, res, next);
 
     }
 );
-
 
 // ============================================================
 // 404
@@ -1479,20 +1432,16 @@ app.use(
 
         res.status(404).json({
 
-            success:
-                false,
+            success: false,
 
-            error:
-                "Route not found",
+            error: "Route not found",
 
-            path:
-                req.path
+            path: req.path
 
         });
 
     }
 );
-
 
 // ============================================================
 // GLOBAL ERROR HANDLER
@@ -1506,7 +1455,6 @@ app.use(
             error
         );
 
-
         if (
             res.headersSent
         ) {
@@ -1515,20 +1463,16 @@ app.use(
 
         }
 
-
         res.status(500).json({
 
-            success:
-                false,
+            success: false,
 
-            error:
-                "Internal server error"
+            error: "Internal server error"
 
         });
 
     }
 );
-
 
 // ============================================================
 // START SERVER
@@ -1577,7 +1521,6 @@ const server =
         }
     );
 
-
 // ============================================================
 // GRACEFUL SHUTDOWN
 // ============================================================
@@ -1589,11 +1532,9 @@ function shutdown(signal) {
         `${signal} received. Shutting down...`
     );
 
-
     // Stop all viewers
     for (
-        const sessionId
-        of viewers.keys()
+        const sessionId of viewers.keys()
     ) {
 
         stopViewer(
@@ -1601,7 +1542,6 @@ function shutdown(signal) {
         );
 
     }
-
 
     server.close(
         () => {
@@ -1615,7 +1555,6 @@ function shutdown(signal) {
         }
     );
 
-
     // Force shutdown after 10 seconds
     setTimeout(
         () => {
@@ -1627,7 +1566,6 @@ function shutdown(signal) {
     );
 
 }
-
 
 process.on(
     "SIGTERM",
