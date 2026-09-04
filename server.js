@@ -1,18 +1,19 @@
-const express = require("express");
+Okay, so regarding my story. Most of the modeling transactions are done so facing one issue regarding environment but as of now for single test case execution all the transactions are working fine for SAS. So I started script creation and refactoring for the shop fluor transaction. So as of now, I don't have any blocker for that, and, also checking for the UPC environment if it is working so we can also move for concurrent user execution themselves from yourself I think I will move it to a develop state thanks for the sheepdo not for the sheep markets of values around it for the global base no write with a fond if you could have a pre management place we'll discuss discuss for activate so executes the include function of referenceselecton its jobs point sevenconst express = require("express");
 const fs = require("fs");
 const path = require("path");
 const net = require("net");
 const crypto = require("crypto");
-const {
-    spawn
-} = require("child_process");
-const {
-    createProxyMiddleware
-} = require("http-proxy-middleware");
+const { spawn } = require("child_process");
+const { createProxyMiddleware } = require("http-proxy-middleware");
+
+require("dotenv").config();
 
 const downloadTrace = require("./s3");
 
 const app = express();
+
+// Tell Express to trust the proxy, so HTTPS is detected correctly.
+app.set("trust proxy", 1);
 
 // ============================================================
 // CONFIGURATION
@@ -20,45 +21,56 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
 
+const BASE_URL = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/+$/, "") : "";
+
+function getPublicOrigin(req) {
+    if (BASE_URL) {
+        return BASE_URL;
+    }
+
+    const forwardedProtocol = req.get("x-forwarded-proto");
+    const protocol = forwardedProtocol ? forwardedProtocol.split(",")[0].trim() : req.protocol;
+
+    const forwardedHost = req.get("x-forwarded-host");
+    const host = forwardedHost ? forwardedHost.split(",")[0].trim() : req.get("host");
+
+    return `${protocol}://${host}`;
+}
+
 // Maximum simultaneous trace viewers
 const MAX_VIEWERS = 100;
 
 // Fixed Playwright ports
 const PLAYWRIGHT_START_PORT = 9323;
 
-const PLAYWRIGHT_PORTS = Array.from({
-    length: MAX_VIEWERS
-},
+const PLAYWRIGHT_PORTS = Array.from(
+    {
+        length: MAX_VIEWERS,
+    },
     (_, index) => PLAYWRIGHT_START_PORT + index
 );
 
 // Trace lifetime (absolute max, regardless of activity)
-const TRACE_RETENTION_TIME =
-    10 * 60 * 1000;
+const TRACE_RETENTION_TIME = 10 * 60 * 1000;
 
 // Free a viewer's port if the browser tab stops polling it
 // (e.g. tab closed / navigated away) before the idle timeout
-const IDLE_TIMEOUT =
-    2 * 60 * 1000;
+const IDLE_TIMEOUT = 2 * 60 * 1000;
 
 // How often to sweep for idle/expired viewers
-const IDLE_CHECK_INTERVAL =
-    15 * 1000;
+const IDLE_CHECK_INTERVAL = 15 * 1000;
 
 // Directory for downloaded traces
-const TRACE_DIRECTORY =
-    path.join(__dirname, "traces");
+const TRACE_DIRECTORY = path.join(__dirname, "traces");
 
 // ============================================================
 // CREATE TRACE DIRECTORY
 // ============================================================
 
 if (!fs.existsSync(TRACE_DIRECTORY)) {
-    fs.mkdirSync(
-        TRACE_DIRECTORY, {
-        recursive: true
-    }
-    );
+    fs.mkdirSync(TRACE_DIRECTORY, {
+        recursive: true,
+    });
 }
 
 // ============================================================
@@ -97,40 +109,21 @@ const reservedPorts = new Set();
 // ============================================================
 
 function getPlaywrightCli() {
-
     try {
+        const packageJson = require.resolve("playwright/package.json");
 
-        const packageJson =
-            require.resolve("playwright/package.json");
+        const playwrightDirectory = path.dirname(packageJson);
 
-        const playwrightDirectory =
-            path.dirname(packageJson);
-
-        const cli =
-            path.join(
-                playwrightDirectory,
-                "cli.js"
-            );
+        const cli = path.join(playwrightDirectory, "cli.js");
 
         if (!fs.existsSync(cli)) {
-
-            throw new Error(
-                `Playwright CLI not found: ${cli}`
-            );
-
+            throw new Error(`Playwright CLI not found: ${cli}`);
         }
 
         return cli;
-
     } catch (error) {
-
-        throw new Error(
-            "Playwright is not installed. " +
-            "Run: npm install playwright"
-        );
-
+        throw new Error("Playwright is not installed. " + "Run: npm install playwright");
     }
-
 }
 
 // ============================================================
@@ -138,43 +131,21 @@ function getPlaywrightCli() {
 // ============================================================
 
 function isPortAvailable(port) {
-
     return new Promise((resolve) => {
+        const server = net.createServer();
 
-        const server =
-            net.createServer();
+        server.once("error", () => {
+            resolve(false);
+        });
 
-        server.once(
-            "error",
-            () => {
+        server.once("listening", () => {
+            server.close(() => {
+                resolve(true);
+            });
+        });
 
-                resolve(false);
-
-            }
-        );
-
-        server.once(
-            "listening",
-            () => {
-
-                server.close(
-                    () => {
-
-                        resolve(true);
-
-                    }
-                );
-
-            }
-        );
-
-        server.listen(
-            port,
-            "127.0.0.1"
-        );
-
+        server.listen(port, "127.0.0.1");
     });
-
 }
 
 // ============================================================
@@ -182,19 +153,14 @@ function isPortAvailable(port) {
 // ============================================================
 
 async function getFreeViewerPort() {
-
-    for (
-        const port of PLAYWRIGHT_PORTS
-    ) {
-
+    for (const port of PLAYWRIGHT_PORTS) {
         // Already reserved by our application
         if (reservedPorts.has(port)) {
             continue;
         }
 
         // Check actual OS port
-        const available =
-            await isPortAvailable(port);
+        const available = await isPortAvailable(port);
 
         if (!available) {
             continue;
@@ -204,11 +170,9 @@ async function getFreeViewerPort() {
         reservedPorts.add(port);
 
         return port;
-
     }
 
     return null;
-
 }
 
 // ============================================================
@@ -216,9 +180,7 @@ async function getFreeViewerPort() {
 // ============================================================
 
 function releasePort(port) {
-
     reservedPorts.delete(port);
-
 }
 
 // ============================================================
@@ -226,46 +188,31 @@ function releasePort(port) {
 // ============================================================
 
 function validateTestExecutionId(value) {
-
     if (!value) {
-
         return {
             valid: false,
-            error: "testExecutionId is required"
+            error: "testExecutionId is required",
         };
-
     }
 
-    if (
-        typeof value !== "string" ||
-        value.length > 200
-    ) {
-
+    if (typeof value !== "string" || value.length > 200) {
         return {
             valid: false,
-            error: "Invalid testExecutionId"
+            error: "Invalid testExecutionId",
         };
-
     }
 
     // Prevent S3 path traversal
-    if (
-        value.includes("/") ||
-        value.includes("\\") ||
-        value.includes("..")
-    ) {
-
+    if (value.includes("/") || value.includes("\\") || value.includes("..")) {
         return {
             valid: false,
-            error: "Invalid testExecutionId"
+            error: "Invalid testExecutionId",
         };
-
     }
 
     return {
-        valid: true
+        valid: true,
     };
-
 }
 
 // ============================================================
@@ -273,72 +220,47 @@ function validateTestExecutionId(value) {
 // ============================================================
 
 function validateTraceFile(filename) {
-
     if (!filename) {
-
         return {
             valid: false,
-            error: "Trace filename is required"
+            error: "Trace filename is required",
         };
-
     }
 
-    if (
-        typeof filename !== "string" ||
-        filename.length > 255
-    ) {
-
+    if (typeof filename !== "string" || filename.length > 255) {
         return {
             valid: false,
-            error: "Invalid trace filename"
+            error: "Invalid trace filename",
         };
-
     }
 
     // Must be a zip
-    if (
-        !filename.toLowerCase().endsWith(".zip")
-    ) {
-
+    if (!filename.toLowerCase().endsWith(".zip")) {
         return {
             valid: false,
-            error: "Trace filename must end with .zip"
+            error: "Trace filename must end with .zip",
         };
-
     }
 
     // No path traversal
-    if (
-        filename.includes("/") ||
-        filename.includes("\\") ||
-        filename.includes("..")
-    ) {
-
+    if (filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
         return {
             valid: false,
-            error: "Invalid trace filename"
+            error: "Invalid trace filename",
         };
-
     }
 
     // Only safe filename characters
-    if (
-        !/^[a-zA-Z0-9._-]+\.zip$/i.test(
-            filename
-        )
-    ) {
-
+    if (!/^[a-zA-Z0-9._-]+\.zip$/i.test(filename)) {
         return {
             valid: false,
-            error: "Invalid trace filename"
+            error: "Invalid trace filename",
         };
-
     }
 
     return {
-        valid: true
+        valid: true,
     };
-
 }
 
 // ============================================================
@@ -354,175 +276,89 @@ function validateTraceFile(filename) {
 // ============================================================
 
 function getVuidFromFilename(filename) {
-
-    return filename.replace(
-        /\.zip$/i,
-        ""
-    );
-
+    return filename.replace(/\.zip$/i, "");
 }
 
 // ============================================================
 // WAIT FOR PORT
 // ============================================================
 
-function waitForPort(
-    port,
-    timeout = 15000
-) {
+function waitForPort(port, timeout = 15000) {
+    return new Promise((resolve, reject) => {
+        const start = Date.now();
 
-    return new Promise(
-        (resolve, reject) => {
+        function check() {
+            const socket = new net.Socket();
 
-            const start =
-                Date.now();
+            socket.setTimeout(1000);
 
-            function check() {
+            socket.once("connect", () => {
+                socket.destroy();
 
-                const socket =
-                    new net.Socket();
+                resolve();
+            });
 
-                socket.setTimeout(1000);
+            socket.once("error", () => {
+                socket.destroy();
 
-                socket.once(
-                    "connect",
-                    () => {
+                if (Date.now() - start >= timeout) {
+                    reject(new Error(`Port ${port} did not become ready`));
 
-                        socket.destroy();
+                    return;
+                }
 
-                        resolve();
+                setTimeout(check, 200);
+            });
 
-                    }
-                );
+            socket.once("timeout", () => {
+                socket.destroy();
 
-                socket.once(
-                    "error",
-                    () => {
+                if (Date.now() - start >= timeout) {
+                    reject(new Error(`Port ${port} did not become ready`));
 
-                        socket.destroy();
+                    return;
+                }
 
-                        if (
-                            Date.now() - start >=
-                            timeout
-                        ) {
+                setTimeout(check, 200);
+            });
 
-                            reject(
-                                new Error(
-                                    `Port ${port} did not become ready`
-                                )
-                            );
-
-                            return;
-
-                        }
-
-                        setTimeout(
-                            check,
-                            200
-                        );
-
-                    }
-                );
-
-                socket.once(
-                    "timeout",
-                    () => {
-
-                        socket.destroy();
-
-                        if (
-                            Date.now() - start >=
-                            timeout
-                        ) {
-
-                            reject(
-                                new Error(
-                                    `Port ${port} did not become ready`
-                                )
-                            );
-
-                            return;
-
-                        }
-
-                        setTimeout(
-                            check,
-                            200
-                        );
-
-                    }
-                );
-
-                socket.connect(
-                    port,
-                    "127.0.0.1"
-                );
-
-            }
-
-            check();
-
+            socket.connect(port, "127.0.0.1");
         }
-    );
 
+        check();
+    });
 }
 
 // ============================================================
 // STOP VIEWER
 // ============================================================
 
-function stopViewer(
-    sessionId
-) {
-
-    const viewer =
-        viewers.get(sessionId);
+function stopViewer(sessionId) {
+    const viewer = viewers.get(sessionId);
 
     if (!viewer) {
         return;
     }
 
     console.log("");
-    console.log(
-        "===================================="
-    );
+    console.log("====================================");
 
-    console.log(
-        "CLEANING VIEWER"
-    );
+    console.log("CLEANING VIEWER");
 
-    console.log(
-        "Session:",
-        sessionId
-    );
+    console.log("Session:", sessionId);
 
-    console.log(
-        "Port:",
-        viewer.port
-    );
+    console.log("Port:", viewer.port);
 
     // --------------------------------------------------------
     // Stop Playwright
     // --------------------------------------------------------
 
-    if (
-        viewer.process &&
-        !viewer.process.killed
-    ) {
-
+    if (viewer.process && !viewer.process.killed) {
         try {
-
             viewer.process.kill();
-
         } catch (error) {
-
-            console.error(
-                "Failed to stop Playwright:",
-                error.message
-            );
-
+            console.error("Failed to stop Playwright:", error.message);
         }
-
     }
 
     // --------------------------------------------------------
@@ -530,69 +366,38 @@ function stopViewer(
     // --------------------------------------------------------
 
     if (viewer.cleanupTimer) {
-
-        clearTimeout(
-            viewer.cleanupTimer
-        );
-
+        clearTimeout(viewer.cleanupTimer);
     }
 
     // --------------------------------------------------------
     // Delete trace
     // --------------------------------------------------------
 
-    if (
-        viewer.tracePath &&
-        fs.existsSync(viewer.tracePath)
-    ) {
-
+    if (viewer.tracePath && fs.existsSync(viewer.tracePath)) {
         try {
+            fs.unlinkSync(viewer.tracePath);
 
-            fs.unlinkSync(
-                viewer.tracePath
-            );
-
-            console.log(
-                "Trace deleted:",
-                viewer.tracePath
-            );
-
+            console.log("Trace deleted:", viewer.tracePath);
         } catch (error) {
-
-            console.error(
-                "Failed to delete trace:",
-                error.message
-            );
-
+            console.error("Failed to delete trace:", error.message);
         }
-
     }
 
     // --------------------------------------------------------
     // Release port
     // --------------------------------------------------------
 
-    releasePort(
-        viewer.port
-    );
+    releasePort(viewer.port);
 
     // --------------------------------------------------------
     // Remove session
     // --------------------------------------------------------
 
-    viewers.delete(
-        sessionId
-    );
+    viewers.delete(sessionId);
 
-    console.log(
-        "Viewer removed"
-    );
+    console.log("Viewer removed");
 
-    console.log(
-        "Active viewers:",
-        viewers.size
-    );
-
+    console.log("Active viewers:", viewers.size);
 }
 
 // ============================================================
@@ -608,133 +413,81 @@ function stopViewer(
 //
 // ============================================================
 
-setInterval(
-    () => {
+setInterval(() => {
+    const now = Date.now();
 
-        const now = Date.now();
+    for (const [sessionId, viewer] of viewers) {
+        const idleFor = now - viewer.lastAccessedAt;
 
-        for (
-            const [sessionId, viewer] of viewers
-        ) {
+        const aliveFor = now - viewer.createdAt;
 
-            const idleFor =
-                now - viewer.lastAccessedAt;
+        if (idleFor > IDLE_TIMEOUT || aliveFor > TRACE_RETENTION_TIME) {
+            console.log("Idle/expired viewer, freeing port:", sessionId);
 
-            const aliveFor =
-                now - viewer.createdAt;
-
-            if (
-                idleFor > IDLE_TIMEOUT ||
-                aliveFor > TRACE_RETENTION_TIME
-            ) {
-
-                console.log(
-                    "Idle/expired viewer, freeing port:",
-                    sessionId
-                );
-
-                stopViewer(
-                    sessionId
-                );
-
-            }
-
+            stopViewer(sessionId);
         }
-
-    },
-    IDLE_CHECK_INTERVAL
-);
+    }
+}, IDLE_CHECK_INTERVAL);
 
 // ============================================================
 // HEALTH CHECK
 // ============================================================
 
-app.get(
-    "/health",
-    (req, res) => {
+app.get("/health", (req, res) => {
+    res.json({
+        status: "ok",
 
-        res.json({
+        service: "playwright-trace-viewer",
 
-            status: "ok",
+        uptime: process.uptime(),
 
-            service: "playwright-trace-viewer",
+        activeViewers: viewers.size,
 
-            uptime: process.uptime(),
+        maxViewers: MAX_VIEWERS,
 
-            activeViewers: viewers.size,
+        availableSlots: MAX_VIEWERS - viewers.size,
 
-            maxViewers: MAX_VIEWERS,
-
-            availableSlots: MAX_VIEWERS - viewers.size,
-
-            playwrightPorts: PLAYWRIGHT_PORTS
-
-        });
-
-    }
-);
+        playwrightPorts: PLAYWRIGHT_PORTS,
+    });
+});
 
 // ============================================================
 // PORT INFORMATION
 // ============================================================
 
-app.get(
-    "/port",
-    (req, res) => {
+app.get("/port", (req, res) => {
+    const ports = PLAYWRIGHT_PORTS.map((port) => {
+        let sessionId = null;
 
-        const ports = PLAYWRIGHT_PORTS.map(
-            (port) => {
+        for (const [id, viewer] of viewers) {
+            if (viewer.port === port) {
+                sessionId = id;
 
-                let sessionId = null;
-
-                for (
-                    const [
-                        id,
-                        viewer
-                    ] of viewers
-                ) {
-
-                    if (
-                        viewer.port === port
-                    ) {
-
-                        sessionId = id;
-
-                        break;
-
-                    }
-
-                }
-
-                return {
-
-                    port,
-
-                    reserved: reservedPorts.has(port),
-
-                    active: Boolean(sessionId),
-
-                    sessionId
-
-                };
-
+                break;
             }
-        );
+        }
 
-        res.json({
+        return {
+            port,
 
-            maxViewers: MAX_VIEWERS,
+            reserved: reservedPorts.has(port),
 
-            activeViewers: viewers.size,
+            active: Boolean(sessionId),
 
-            availableSlots: MAX_VIEWERS - viewers.size,
+            sessionId,
+        };
+    });
 
-            ports
+    res.json({
+        maxViewers: MAX_VIEWERS,
 
-        });
+        activeViewers: viewers.size,
 
-    }
-);
+        availableSlots: MAX_VIEWERS - viewers.size,
+
+        ports,
+    });
+});
 
 // ============================================================
 // CREATE TRACE VIEWER
@@ -746,587 +499,352 @@ app.get(
 //
 // ============================================================
 
-app.get(
-    "/trace/:filename",
-    async (req, res) => {
+app.get("/trace/:filename", async (req, res) => {
+    let tracePath = null;
+    let traceProcess = null;
+    let sessionId = null;
+    let viewerPort = null;
+    let cleanupTimer = null;
 
-        let tracePath = null;
-        let traceProcess = null;
-        let sessionId = null;
-        let viewerPort = null;
-        let cleanupTimer = null;
+    try {
+        console.log("");
+        console.log("====================================");
 
-        try {
+        console.log("TRACE REQUEST");
 
-            console.log("");
-            console.log(
-                "===================================="
-            );
+        console.log("====================================");
 
-            console.log(
-                "TRACE REQUEST"
-            );
+        // ------------------------------------------------
+        // Parameters
+        // ------------------------------------------------
 
-            console.log(
-                "===================================="
-            );
+        const filename = req.params.filename;
 
-            // ------------------------------------------------
-            // Parameters
-            // ------------------------------------------------
+        const testExecutionId = req.query.testExecutionId;
 
-            const filename =
-                req.params.filename;
+        console.log("Filename:", filename);
 
-            const testExecutionId =
-                req.query.testExecutionId;
+        console.log("Execution:", testExecutionId);
 
-            console.log(
-                "Filename:",
-                filename
-            );
+        // ------------------------------------------------
+        // Validate filename
+        // ------------------------------------------------
 
-            console.log(
-                "Execution:",
-                testExecutionId
-            );
+        const filenameValidation = validateTraceFile(filename);
 
-            // ------------------------------------------------
-            // Validate filename
-            // ------------------------------------------------
-
-            const filenameValidation =
-                validateTraceFile(
-                    filename
-                );
-
-            if (
-                !filenameValidation.valid
-            ) {
-
-                return res.status(400).json({
-
-                    error: filenameValidation.error
-
-                });
-
-            }
-
-            // ------------------------------------------------
-            // Validate execution ID
-            // ------------------------------------------------
-
-            const executionValidation =
-                validateTestExecutionId(
-                    testExecutionId
-                );
-
-            if (
-                !executionValidation.valid
-            ) {
-
-                return res.status(400).json({
-
-                    error: executionValidation.error
-
-                });
-
-            }
-
-            // ------------------------------------------------
-            // VUID comes from filename
-            // ------------------------------------------------
-
-            const vuid =
-                getVuidFromFilename(
-                    filename
-                );
-
-            console.log(
-                "VUID:",
-                vuid
-            );
-
-            // ------------------------------------------------
-            // Maximum viewer limit
-            // ------------------------------------------------
-
-            if (
-                viewers.size >=
-                MAX_VIEWERS
-            ) {
-
-                return res.status(429).json({
-
-                    error: "Maximum trace viewer limit reached",
-
-                    maxViewers: MAX_VIEWERS,
-
-                    message: "Please try again later"
-
-                });
-
-            }
-
-            // ------------------------------------------------
-            // Get fixed port
-            // ------------------------------------------------
-
-            viewerPort =
-                await getFreeViewerPort();
-
-            if (!viewerPort) {
-
-                return res.status(503).json({
-
-                    error: "No trace viewer slots available",
-
-                    maxViewers: MAX_VIEWERS
-
-                });
-
-            }
-
-            console.log(
-                "Viewer port:",
-                viewerPort
-            );
-
-            // ------------------------------------------------
-            // Download S3 trace
-            // ------------------------------------------------
-
-            tracePath =
-                await downloadTrace(
-                    testExecutionId,
-                    filename
-                );
-
-            if (
-                !tracePath ||
-                !fs.existsSync(tracePath)
-            ) {
-
-                throw new Error(
-                    "Trace download failed"
-                );
-
-            }
-
-            console.log(
-                "Trace:",
-                tracePath
-            );
-
-            // ------------------------------------------------
-            // Session ID
-            // ------------------------------------------------
-
-            sessionId =
-                crypto
-                    .randomBytes(16)
-                    .toString("hex");
-
-            console.log(
-                "Session:",
-                sessionId
-            );
-
-            // ------------------------------------------------
-            // Playwright CLI
-            // ------------------------------------------------
-
-            const playwrightCli =
-                getPlaywrightCli();
-
-            console.log(
-                "Playwright CLI:",
-                playwrightCli
-            );
-
-            // ------------------------------------------------
-            // Start Playwright
-            // ------------------------------------------------
-
-            const args = [
-
-                playwrightCli,
-
-                "show-trace",
-
-                tracePath,
-
-                "--host",
-                "127.0.0.1",
-
-                "--port",
-                String(viewerPort)
-
-            ];
-
-            console.log(
-                "Starting Playwright..."
-            );
-
-            traceProcess =
-                spawn(
-                    process.execPath,
-                    args, {
-
-                    stdio: [
-                        "ignore",
-                        "pipe",
-                        "pipe"
-                    ],
-
-                    windowsHide: true
-
-                }
-                );
-
-            // ------------------------------------------------
-            // Playwright stdout
-            // ------------------------------------------------
-
-            traceProcess.stdout.on(
-                "data",
-                (data) => {
-
-                    console.log(
-                        `[Playwright ${viewerPort}] ${data.toString().trim()}`
-                    );
-
-                }
-            );
-
-            // ------------------------------------------------
-            // Playwright stderr
-            // ------------------------------------------------
-
-            traceProcess.stderr.on(
-                "data",
-                (data) => {
-
-                    console.error(
-                        `[Playwright ${viewerPort}] ${data.toString().trim()}`
-                    );
-
-                }
-            );
-
-            // ------------------------------------------------
-            // Spawn error
-            // ------------------------------------------------
-
-            traceProcess.on(
-                "error",
-                (error) => {
-
-                    console.error(
-                        "Playwright process error:",
-                        error
-                    );
-
-                }
-            );
-
-            // ------------------------------------------------
-            // Process exit
-            // ------------------------------------------------
-
-            traceProcess.on(
-                "exit",
-                (code, signal) => {
-
-                    console.log(
-                        `Playwright exited. Port=${viewerPort} Code=${code} Signal=${signal}`
-                    );
-
-                }
-            );
-
-            // ------------------------------------------------
-            // Wait until Playwright is listening
-            // ------------------------------------------------
-
-            await waitForPort(
-                viewerPort
-            );
-
-            console.log(
-                `Playwright ready on ${viewerPort}`
-            );
-
-            // ------------------------------------------------
-            // Store viewer
-            // ------------------------------------------------
-
-            viewers.set(
-                sessionId, {
-
-                port: viewerPort,
-
-                process: traceProcess,
-
-                tracePath: tracePath,
-
-                filename: filename,
-
-                evidenceId: filename,
-
-                testExecutionId: testExecutionId,
-
-                vuid: vuid,
-
-                createdAt: Date.now(),
-
-                // Updated on every proxied request; used to
-                // detect a closed/abandoned tab
-                lastAccessedAt: Date.now(),
-
-                cleanupTimer: null
-
-            }
-            );
-
-            // ------------------------------------------------
-            // Cleanup timer
-            // ------------------------------------------------
-
-            cleanupTimer =
-                setTimeout(
-                    () => {
-
-                        stopViewer(
-                            sessionId
-                        );
-
-                    },
-                    TRACE_RETENTION_TIME
-                );
-
-            const viewer =
-                viewers.get(
-                    sessionId
-                );
-
-            viewer.cleanupTimer =
-                cleanupTimer;
-
-            // ------------------------------------------------
-            // Return response
-            // ------------------------------------------------
-
-            const host =
-                req.get("host");
-
-            const protocol =
-                req.protocol;
-
-            res.status(200).json({
-
-                success: true,
-
-                message: "Trace viewer started",
-
-                sessionId: sessionId,
-
-                viewer: `${protocol}://${host}/viewer/${sessionId}/`,
-
-                testExecutionId: testExecutionId,
-
-                filename: filename,
-
-                vuid: vuid,
-
-                port: viewerPort,
-
-                expiresIn: "10 minutes",
-
-                activeViewers: viewers.size,
-
-                maxViewers: MAX_VIEWERS
-
+        if (!filenameValidation.valid) {
+            return res.status(400).json({
+                error: filenameValidation.error,
             });
-
-        } catch (error) {
-
-            console.error("");
-            console.error(
-                "TRACE ERROR:",
-                error
-            );
-
-            // ------------------------------------------------
-            // Kill Playwright
-            // ------------------------------------------------
-
-            if (
-                traceProcess &&
-                !traceProcess.killed
-            ) {
-
-                try {
-
-                    traceProcess.kill();
-
-                } catch { }
-
-            }
-
-            // ------------------------------------------------
-            // Release port
-            // ------------------------------------------------
-
-            if (viewerPort) {
-
-                releasePort(
-                    viewerPort
-                );
-
-            }
-
-            // ------------------------------------------------
-            // Delete trace
-            // ------------------------------------------------
-
-            if (
-                tracePath &&
-                fs.existsSync(tracePath)
-            ) {
-
-                try {
-
-                    fs.unlinkSync(
-                        tracePath
-                    );
-
-                } catch { }
-
-            }
-
-            // ------------------------------------------------
-            // Remove session
-            // ------------------------------------------------
-
-            if (sessionId) {
-
-                viewers.delete(
-                    sessionId
-                );
-
-            }
-
-            // ------------------------------------------------
-            // Error response
-            // ------------------------------------------------
-
-            let statusCode = 500;
-
-            let errorMessage =
-                error.message ||
-                "Internal server error";
-
-            // S3 not found
-            if (
-                error.name ===
-                "NoSuchKey"
-            ) {
-
-                statusCode = 404;
-
-                errorMessage =
-                    "Trace file not found in S3";
-
-            }
-
-            res.status(
-                statusCode
-            ).json({
-
-                success: false,
-
-                error: errorMessage,
-
-                testExecutionId: testExecutionId || null,
-
-                filename: req.params.filename || null
-
-            });
-
         }
 
+        // ------------------------------------------------
+        // Validate execution ID
+        // ------------------------------------------------
+
+        const executionValidation = validateTestExecutionId(testExecutionId);
+
+        if (!executionValidation.valid) {
+            return res.status(400).json({
+                error: executionValidation.error,
+            });
+        }
+
+        // ------------------------------------------------
+        // VUID comes from filename
+        // ------------------------------------------------
+
+        const vuid = getVuidFromFilename(filename);
+
+        console.log("VUID:", vuid);
+
+        // ------------------------------------------------
+        // Maximum viewer limit
+        // ------------------------------------------------
+
+        if (viewers.size >= MAX_VIEWERS) {
+            return res.status(429).json({
+                error: "Maximum trace viewer limit reached",
+
+                maxViewers: MAX_VIEWERS,
+
+                message: "Please try again later",
+            });
+        }
+
+        // ------------------------------------------------
+        // Get fixed port
+        // ------------------------------------------------
+
+        viewerPort = await getFreeViewerPort();
+
+        if (!viewerPort) {
+            return res.status(503).json({
+                error: "No trace viewer slots available",
+
+                maxViewers: MAX_VIEWERS,
+            });
+        }
+
+        console.log("Viewer port:", viewerPort);
+
+        // ------------------------------------------------
+        // Download S3 trace
+        // ------------------------------------------------
+
+        tracePath = await downloadTrace(testExecutionId, filename);
+
+        if (!tracePath || !fs.existsSync(tracePath)) {
+            throw new Error("Trace download failed");
+        }
+
+        console.log("Trace:", tracePath);
+
+        // ------------------------------------------------
+        // Session ID
+        // ------------------------------------------------
+
+        sessionId = crypto.randomBytes(16).toString("hex");
+
+        console.log("Session:", sessionId);
+
+        // ------------------------------------------------
+        // Playwright CLI
+        // ------------------------------------------------
+
+        const playwrightCli = getPlaywrightCli();
+
+        console.log("Playwright CLI:", playwrightCli);
+
+        // ------------------------------------------------
+        // Start Playwright
+        // ------------------------------------------------
+
+        const args = [playwrightCli, "show-trace", tracePath, "--host", "127.0.0.1", "--port", String(viewerPort)];
+
+        console.log("Starting Playwright...");
+
+        traceProcess = spawn(process.execPath, args, {
+            stdio: ["ignore", "pipe", "pipe"],
+
+            windowsHide: true,
+        });
+
+        // ------------------------------------------------
+        // Playwright stdout
+        // ------------------------------------------------
+
+        traceProcess.stdout.on("data", (data) => {
+            console.log(`[Playwright ${viewerPort}] ${data.toString().trim()}`);
+        });
+
+        // ------------------------------------------------
+        // Playwright stderr
+        // ------------------------------------------------
+
+        traceProcess.stderr.on("data", (data) => {
+            console.error(`[Playwright ${viewerPort}] ${data.toString().trim()}`);
+        });
+
+        // ------------------------------------------------
+        // Spawn error
+        // ------------------------------------------------
+
+        traceProcess.on("error", (error) => {
+            console.error("Playwright process error:", error);
+        });
+
+        // ------------------------------------------------
+        // Process exit
+        // ------------------------------------------------
+
+        traceProcess.on("exit", (code, signal) => {
+            console.log(`Playwright exited. Port=${viewerPort} Code=${code} Signal=${signal}`);
+        });
+
+        // ------------------------------------------------
+        // Wait until Playwright is listening
+        // ------------------------------------------------
+
+        await waitForPort(viewerPort);
+
+        console.log(`Playwright ready on ${viewerPort}`);
+
+        // ------------------------------------------------
+        // Store viewer
+        // ------------------------------------------------
+
+        viewers.set(sessionId, {
+            port: viewerPort,
+
+            process: traceProcess,
+
+            tracePath: tracePath,
+
+            filename: filename,
+
+            evidenceId: filename,
+
+            testExecutionId: testExecutionId,
+
+            vuid: vuid,
+
+            createdAt: Date.now(),
+
+            // Updated on every proxied request; used to
+            // detect a closed/abandoned tab
+            lastAccessedAt: Date.now(),
+
+            cleanupTimer: null,
+        });
+
+        // ------------------------------------------------
+        // Cleanup timer
+        // ------------------------------------------------
+
+        cleanupTimer = setTimeout(() => {
+            stopViewer(sessionId);
+        }, TRACE_RETENTION_TIME);
+
+        const viewer = viewers.get(sessionId);
+
+        viewer.cleanupTimer = cleanupTimer;
+
+        // ------------------------------------------------
+        // Return response
+        // ------------------------------------------------
+
+        const origin = getPublicOrigin(req);
+
+        res.status(200).json({
+            success: true,
+
+            message: "Trace viewer started",
+
+            sessionId: sessionId,
+
+            viewer: `${origin}/viewer/${sessionId}/`,
+
+            testExecutionId: testExecutionId,
+
+            filename: filename,
+
+            vuid: vuid,
+
+            port: viewerPort,
+
+            expiresIn: "10 minutes",
+
+            activeViewers: viewers.size,
+
+            maxViewers: MAX_VIEWERS,
+        });
+    } catch (error) {
+        console.error("");
+        console.error("TRACE ERROR:", error);
+
+        // ------------------------------------------------
+        // Kill Playwright
+        // ------------------------------------------------
+
+        if (traceProcess && !traceProcess.killed) {
+            try {
+                traceProcess.kill();
+            } catch {}
+        }
+
+        // ------------------------------------------------
+        // Release port
+        // ------------------------------------------------
+
+        if (viewerPort) {
+            releasePort(viewerPort);
+        }
+
+        // ------------------------------------------------
+        // Delete trace
+        // ------------------------------------------------
+
+        if (tracePath && fs.existsSync(tracePath)) {
+            try {
+                fs.unlinkSync(tracePath);
+            } catch {}
+        }
+
+        // ------------------------------------------------
+        // Remove session
+        // ------------------------------------------------
+
+        if (sessionId) {
+            viewers.delete(sessionId);
+        }
+
+        // ------------------------------------------------
+        // Error response
+        // ------------------------------------------------
+
+        let statusCode = 500;
+
+        let errorMessage = error.message || "Internal server error";
+
+        // S3 not found
+        if (error.name === "NoSuchKey") {
+            statusCode = 404;
+
+            errorMessage = "Trace file not found in S3";
+        }
+
+        res.status(statusCode).json({
+            success: false,
+
+            error: errorMessage,
+
+            testExecutionId: testExecutionId || null,
+
+            filename: req.params.filename || null,
+        });
     }
-);
+});
 
 // ============================================================
 // SESSION INFO
 // ============================================================
 
-app.get(
-    "/trace-session/:sessionId",
-    (req, res) => {
+app.get("/trace-session/:sessionId", (req, res) => {
+    const sessionId = req.params.sessionId;
 
-        const sessionId =
-            req.params.sessionId;
+    const viewer = viewers.get(sessionId);
 
-        const viewer =
-            viewers.get(
-                sessionId
-            );
+    if (!viewer) {
+        return res.status(404).json({
+            success: false,
 
-        if (!viewer) {
-
-            return res.status(404).json({
-
-                success: false,
-
-                error: "Trace session not found or expired"
-
-            });
-
-        }
-
-        const expiresAt =
-            viewer.createdAt +
-            TRACE_RETENTION_TIME;
-
-        res.json({
-
-            success: true,
-
-            sessionId: sessionId,
-
-            filename: viewer.filename,
-
-            vuid: viewer.vuid,
-
-            testExecutionId: viewer.testExecutionId,
-
-            port: viewer.port,
-
-            createdAt: new Date(
-                viewer.createdAt
-            ).toISOString(),
-
-            expiresAt: new Date(
-                expiresAt
-            ).toISOString(),
-
-            remainingSeconds: Math.max(
-                0,
-                Math.floor(
-                    (
-                        expiresAt -
-                        Date.now()
-                    ) / 1000
-                )
-            )
-
+            error: "Trace session not found or expired",
         });
-
     }
-);
+
+    const expiresAt = viewer.createdAt + TRACE_RETENTION_TIME;
+
+    res.json({
+        success: true,
+
+        sessionId: sessionId,
+
+        filename: viewer.filename,
+
+        vuid: viewer.vuid,
+
+        testExecutionId: viewer.testExecutionId,
+
+        port: viewer.port,
+
+        createdAt: new Date(viewer.createdAt).toISOString(),
+
+        expiresAt: new Date(expiresAt).toISOString(),
+
+        remainingSeconds: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)),
+    });
+});
 
 // ============================================================
 // VIEWER PROXY
@@ -1340,239 +858,132 @@ app.get(
 //
 // ============================================================
 
-app.use(
-    "/viewer/:sessionId",
-    (req, res, next) => {
+app.use("/viewer/:sessionId", (req, res, next) => {
+    const sessionId = req.params.sessionId;
 
-        const sessionId =
-            req.params.sessionId;
+    const viewer = viewers.get(sessionId);
 
-        const viewer =
-            viewers.get(
-                sessionId
-            );
+    if (!viewer) {
+        return res.status(404).send("Trace viewer expired or not found");
+    }
 
-        if (!viewer) {
+    // Mark activity so the idle sweep doesn't free this
+    // port while the tab is still open and in use
+    viewer.lastAccessedAt = Date.now();
 
-            return res.status(404).send(
-                "Trace viewer expired or not found"
-            );
+    console.log("VIEWER:", sessionId, "->", viewer.port);
 
-        }
+    return createProxyMiddleware({
+        target: `http://127.0.0.1:${viewer.port}`,
 
-        // Mark activity so the idle sweep doesn't free this
-        // port while the tab is still open and in use
-        viewer.lastAccessedAt =
-            Date.now();
+        changeOrigin: true,
 
-        console.log(
-            "VIEWER:",
-            sessionId,
-            "->",
-            viewer.port
-        );
+        ws: true,
 
-        return createProxyMiddleware({
+        pathRewrite: (path) => {
+            // Remove:
+            //
+            // /viewer/<sessionId>
+            //
+            // leaving:
+            //
+            // /
 
-            target: `http://127.0.0.1:${viewer.port}`,
+            const prefix = `/viewer/${sessionId}`;
 
-            changeOrigin: true,
-
-            ws: true,
-
-            pathRewrite: (path) => {
-
-                // Remove:
-                //
-                // /viewer/<sessionId>
-                //
-                // leaving:
-                //
-                // /
-
-                const prefix =
-                    `/viewer/${sessionId}`;
-
-                if (
-                    path.startsWith(prefix)
-                ) {
-
-                    return (
-                        path.substring(
-                            prefix.length
-                        ) || "/"
-                    );
-
-                }
-
-                return path;
-
-            },
-
-            onError: (error, req, res) => {
-
-                console.error(
-                    "Proxy error:",
-                    error.message
-                );
-
+            if (path.startsWith(prefix)) {
+                return path.substring(prefix.length) || "/";
             }
 
-        })(req, res, next);
+            return path;
+        },
 
-    }
-);
+        onError: (error, req, res) => {
+            console.error("Proxy error:", error.message);
+        },
+    })(req, res, next);
+});
 
 // ============================================================
 // 404
 // ============================================================
 
-app.use(
-    (req, res) => {
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
 
-        res.status(404).json({
+        error: "Route not found",
 
-            success: false,
-
-            error: "Route not found",
-
-            path: req.path
-
-        });
-
-    }
-);
+        path: req.path,
+    });
+});
 
 // ============================================================
 // GLOBAL ERROR HANDLER
 // ============================================================
 
-app.use(
-    (error, req, res, next) => {
+app.use((error, req, res, next) => {
+    console.error("Unhandled error:", error);
 
-        console.error(
-            "Unhandled error:",
-            error
-        );
-
-        if (
-            res.headersSent
-        ) {
-
-            return next(error);
-
-        }
-
-        res.status(500).json({
-
-            success: false,
-
-            error: "Internal server error"
-
-        });
-
+    if (res.headersSent) {
+        return next(error);
     }
-);
+
+    res.status(500).json({
+        success: false,
+
+        error: "Internal server error",
+    });
+});
 
 // ============================================================
 // START SERVER
 // ============================================================
 
-const server =
-    app.listen(
-        PORT,
-        "0.0.0.0",
-        () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log("");
+    console.log("================================");
 
-            console.log("");
-            console.log(
-                "================================"
-            );
+    console.log("TRACE VIEWER SERVER");
 
-            console.log(
-                "TRACE VIEWER SERVER"
-            );
+    console.log("================================");
 
-            console.log(
-                "================================"
-            );
+    console.log(`Server: http://0.0.0.0:${PORT}`);
 
-            console.log(
-                `Server: http://0.0.0.0:${PORT}`
-            );
+    console.log(`Max viewers: ${MAX_VIEWERS}`);
 
-            console.log(
-                `Max viewers: ${MAX_VIEWERS}`
-            );
+    console.log(`Viewer ports: ${PLAYWRIGHT_START_PORT}-${PLAYWRIGHT_START_PORT + MAX_VIEWERS - 1}`);
 
-            console.log(
-                `Viewer ports: ${PLAYWRIGHT_START_PORT}-${PLAYWRIGHT_START_PORT + MAX_VIEWERS - 1}`
-            );
+    console.log("Playwright CLI:", getPlaywrightCli());
 
-            console.log(
-                "Playwright CLI:",
-                getPlaywrightCli()
-            );
-
-            console.log(
-                "================================"
-            );
-
-        }
-    );
+    console.log("================================");
+});
 
 // ============================================================
 // GRACEFUL SHUTDOWN
 // ============================================================
 
 function shutdown(signal) {
-
     console.log("");
-    console.log(
-        `${signal} received. Shutting down...`
-    );
+    console.log(`${signal} received. Shutting down...`);
 
     // Stop all viewers
-    for (
-        const sessionId of viewers.keys()
-    ) {
-
-        stopViewer(
-            sessionId
-        );
-
+    for (const sessionId of viewers.keys()) {
+        stopViewer(sessionId);
     }
 
-    server.close(
-        () => {
+    server.close(() => {
+        console.log("HTTP server closed");
 
-            console.log(
-                "HTTP server closed"
-            );
-
-            process.exit(0);
-
-        }
-    );
+        process.exit(0);
+    });
 
     // Force shutdown after 10 seconds
-    setTimeout(
-        () => {
-
-            process.exit(1);
-
-        },
-        10000
-    );
-
+    setTimeout(() => {
+        process.exit(1);
+    }, 10000);
 }
 
-process.on(
-    "SIGTERM",
-    () => shutdown("SIGTERM")
-);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-process.on(
-    "SIGINT",
-    () => shutdown("SIGINT")
-);
+process.on("SIGINT", () => shutdown("SIGINT"));
