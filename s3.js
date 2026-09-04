@@ -20,7 +20,7 @@ async function downloadTrace(testExecutionId, evidenceId) {
     // S3 configuration
     // ---------------------------------------------
 
-    const bucket = "sas-migration-result-eveidence";
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || "sas-migration-result-eveidence";
 
     const key = `${testExecutionId}/${evidenceId}`;
 

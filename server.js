@@ -1,10 +1,10 @@
-Okay, so regarding my story. Most of the modeling transactions are done so facing one issue regarding environment but as of now for single test case execution all the transactions are working fine for SAS. So I started script creation and refactoring for the shop fluor transaction. So as of now, I don't have any blocker for that, and, also checking for the UPC environment if it is working so we can also move for concurrent user execution themselves from yourself I think I will move it to a develop state thanks for the sheepdo not for the sheep markets of values around it for the global base no write with a fond if you could have a pre management place we'll discuss discuss for activate so executes the include function of referenceselecton its jobs point sevenconst express = require("express");
 const fs = require("fs");
 const path = require("path");
 const net = require("net");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { createProxyMiddleware } = require("http-proxy-middleware");
+const express = require("express");
 
 require("dotenv").config();
 
@@ -23,6 +23,16 @@ const PORT = Number(process.env.PORT || 3000);
 
 const BASE_URL = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/+$/, "") : "";
 
+const MAX_VIEWERS = Number(process.env.MAX_VIEWERS || 10);
+
+const PLAYWRIGHT_START_PORT = Number(process.env.PLAYWRIGHT_START_PORT || 9323);
+
+const TRACE_RETENTION_TIME = Number(process.env.TRACE_RETENTION_MINUTES || 10) * 60 * 1000;
+
+const IDLE_TIMEOUT = Number(process.env.IDLE_TIMEOUT_MINUTES || 5) * 60 * 1000;
+
+const IDLE_CHECK_INTERVAL = Number(process.env.IDLE_CHECK_SECONDS || 15) * 1000;
+
 function getPublicOrigin(req) {
     if (BASE_URL) {
         return BASE_URL;
@@ -37,12 +47,7 @@ function getPublicOrigin(req) {
     return `${protocol}://${host}`;
 }
 
-// Maximum simultaneous trace viewers
-const MAX_VIEWERS = 100;
-
 // Fixed Playwright ports
-const PLAYWRIGHT_START_PORT = 9323;
-
 const PLAYWRIGHT_PORTS = Array.from(
     {
         length: MAX_VIEWERS,
@@ -50,15 +55,9 @@ const PLAYWRIGHT_PORTS = Array.from(
     (_, index) => PLAYWRIGHT_START_PORT + index
 );
 
-// Trace lifetime (absolute max, regardless of activity)
-const TRACE_RETENTION_TIME = 10 * 60 * 1000;
-
 // Free a viewer's port if the browser tab stops polling it
 // (e.g. tab closed / navigated away) before the idle timeout
-const IDLE_TIMEOUT = 2 * 60 * 1000;
-
 // How often to sweep for idle/expired viewers
-const IDLE_CHECK_INTERVAL = 15 * 1000;
 
 // Directory for downloaded traces
 const TRACE_DIRECTORY = path.join(__dirname, "traces");
@@ -799,7 +798,7 @@ app.get("/trace/:filename", async (req, res) => {
 
             error: errorMessage,
 
-            testExecutionId: testExecutionId || null,
+            testExecutionId: req.query.testExecutionId || null,
 
             filename: req.params.filename || null,
         });
